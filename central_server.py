@@ -1,15 +1,22 @@
 import flwr as fl
+from flwr.server.client_manager import SimpleClientManager
+from flwr.server.strategy import FedAvg
 
 
 def main():
-    # Define the aggregation strategy (Federated Averaging)
-    strategy = fl.server.strategy.FedAvg()
 
-    # Define the central server with the aggregation strategy
-    server = fl.server.Server(strategy=strategy)
+    client_manager = SimpleClientManager()
+    strategy = FedAvg()
 
-    # Start the server on a specific host and port
-    server.start(host="0.0.0.0", port=8080)
+    # Start Flower server
+    fl.server.start_server(
+        server_address="0.0.0.0:8080",
+        config=fl.server.ServerConfig(
+            num_rounds=3,
+        ),
+        client_manager=client_manager,
+        strategy=strategy
+    )
 
 
 if __name__ == "__main__":

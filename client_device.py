@@ -1,58 +1,33 @@
+import os
+
 import flwr as fl
 import tensorflow as tf
 
 
-# Define a simple Keras model
-def create_compiled_keras_model():
-    model = tf.keras.Sequential(
-        [
-            tf.keras.layers.Flatten(input_shape=(784,)),
-            tf.keras.layers.Dense(128, activation="relu"),
-            tf.keras.layers.Dropout(0.2),
-            tf.keras.layers.Dense(10, activation="softmax"),
-        ]
-    )
+# Make TensorFlow log less verbose
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
-    model.compile(
-        optimizer="adam",
-        loss="sparse_categorical_crossentropy",
-        metrics=["accuracy"],
-    )
-
-    return model
+# Load model and data (MobileNetV2, CIFAR-10)
+model = tf.keras.applications.MobileNetV2((32, 32, 3), classes=10, weights=None)
+model.compile("adam", "sparse_categorical_crossentropy", metrics=["accuracy"])
+(x_train, y_train), (x_test, y_test) = tf.keras.datasets.cifar10.load_data()
 
 
-def main():
-    # Load and preprocess the MNIST dataset
-    (x_train, y_train), _ = tf.keras.datasets.mnist.load_data()
-    x_train, y_train = x_train / 255.0, y_train
+# Define Flower client
+class CifarClient(fl.client.NumPyClient):
+    def get_parameters(self, config):
+        return model.get_weights()
 
-    # Create a Flower client
-    client = fl.client.Client("localhost:8080", grpc=True)
+    def fit(self, parameters, config):
+        model.set_weights(parameters)
+        model.fit(x_train, y_train, epochs=1, batch_size=32)
+        return model.get_weights(), len(x_train), {}
 
-    # Start the client and connect to the central server
-    client.start()
-
-    # Define a compiled Keras model
-    model = create_compiled_keras_model()
-
-    # Define the training loop
-    for round_num in range(10):  # Adjust the number of rounds as needed
-        # Get the global model from the server
-        model_weights = client.get_parameters()
-
-        # Set the model's weights to the global model
-        model.set_weights(model_weights)
-
-        # Train the model on local data
-        model.fit(x_train, y_train, epochs=1)
-
-        # Get the updated model weights
-        new_weights = model.get_weights()
-
-        # Send the updated weights to the server
-        client.send_parameters(new_weights)
+    def evaluate(self, parameters, config):
+        model.set_weights(parameters)
+        loss, accuracy = model.evaluate(x_test, y_test)
+        return loss, len(x_test), {"accuracy": accuracy}
 
 
-if __name__ == "__main__":
-    main()
+# Start Flower client
+fl.client.start_numpy_client(server_address="127.0.0.1:8080", client=CifarClient())
