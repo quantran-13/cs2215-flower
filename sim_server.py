@@ -89,6 +89,8 @@ class CifarClient(fl.client.NumPyClient):
 
         save_metrics_to_csv(
             f"client_{self.client_id}_train_metrics.csv", metrics_list)
+
+        torch.save(self.model.state_dict(), f'{self.client_id}_model_weights_{server_round}.pth')
         return self.get_parameters({}), len(self.train_loader.dataset), {}
 
     # NOTE: this is federated evaluation
@@ -127,8 +129,10 @@ def client_fn(cid: str):
     model.to(torch.float32)
 
     # Load and preprocess your dataset
-    transform = transforms.Compose(
-        [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Resize((32, 32)),
+    ])
     train_dataset = torchvision.datasets.CIFAR10(
         root="./data", train=True, download=True, transform=transform)
     test_dataset = torchvision.datasets.CIFAR10(
