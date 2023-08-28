@@ -26,24 +26,12 @@ def save_metrics_to_csv(filename, metrics_list):
         writer.writerows(metrics_list)
 
 # Define the Flower client
-
-
 class CifarClient(fl.client.NumPyClient):
     def __init__(self, client_id, model, train_loader, test_loader):
         self.client_id = client_id
         self.model = model
         self.train_loader = train_loader
         self.test_loader = test_loader
-
-    # NOTE: CPU only
-    # def get_parameters(self, config):
-    #     print("[Client] get_parameters")
-    #     return [p.cpu().detach().numpy() for p in self.model.parameters()]
-    # def set_parameters(self, parameters):
-    #     new_parameters = [torch.tensor(p, dtype=torch.float32)
-    #                       for p in parameters]
-    #     for current_param, new_param in zip(self.model.parameters(), new_parameters):
-    #         current_param.data = new_param
 
     def get_parameters(self, config):
         print("[Client] get_parameters")
