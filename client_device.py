@@ -1,8 +1,16 @@
 import os
+
 import flwr as fl
 import torch
-import torchvision
-import torchvision.transforms as transforms
+from torchvision.models import mobilenet_v2
+
+from helper_func import (
+    get_parameters,
+    load_datasets,
+    set_parameters,
+    test,
+    train,
+)
 
 # Make PyTorch log less verbose
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -10,88 +18,79 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 # Define the Flower client
 class CifarClient(fl.client.NumPyClient):
-    def __init__(self, model, train_loader, test_loader):
-        self.model = model
-        self.train_loader = train_loader
-        self.test_loader = test_loader
+    def __init__(self, net, train_dataloader, test_dataloader):
+        self.net = net
+        self.train_dataloader = train_dataloader
+        self.test_dataloader = test_dataloader
 
     def get_parameters(self, config):
-        print("[Client] get_parameters")
-        return [p.cpu().detach().numpy() for p in self.model.parameters()]
+        # server_round = config["server_round"]
+        # print(
+        #     f"[Client, round {server_round}] get_parameters, config: {config}"
+        # )
 
-    def set_parameters(self, parameters):
-        new_parameters = [torch.tensor(p, dtype=torch.float32)
-                          for p in parameters]
-        for current_param, new_param in zip(self.model.parameters(), new_parameters):
-            current_param.data = new_param
+        return get_parameters(self.net)
+
+    def set_parameters(self, parameters, config):
+        # server_round = config["server_round"]
+        # print(
+        #     f"[Client, round {server_round}] set_parameters, config: {config}"
+        # )
+
+        set_parameters(self.net, parameters)
 
     def fit(self, parameters, config):
         server_round = config["server_round"]
         local_epochs = config["local_epochs"]
-
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"[Client, round {server_round}] fit, config: {config}")
-        self.set_parameters(parameters)
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
 
-        for epoch in range(local_epochs):
-            for inputs, labels in self.train_loader:
-                optimizer.zero_grad()
-                outputs = self.model(inputs)
-                loss = torch.nn.functional.cross_entropy(outputs, labels)
-                loss.backward()
-                optimizer.step()
+        print("len(self.train_dataloader): ", len(self.train_dataloader))
+        print(
+            "len(self.train_dataloader.dataset): ",
+            len(self.train_dataloader.dataset),
+        )
 
-        return self.get_parameters({}), len(self.train_loader.dataset), {}
+        self.set_parameters(parameters, config)
+        train(
+            self.net,
+            self.train_dataloader,
+            epochs=int(local_epochs),
+            device=device,
+        )
+
+        return self.get_parameters({}), len(self.train_dataloader.dataset), {}
 
     def evaluate(self, parameters, config):
-        self.set_parameters(parameters)
-        loss_sum = 0.0
-        correct = 0
-        total = 0
+        server_round = config["server_round"]
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"[Client, round {server_round}] evaluate, config: {config}")
 
-        with torch.no_grad():
-            for inputs, labels in self.test_loader:
-                outputs = self.model(inputs)
-                loss_sum += torch.nn.functional.cross_entropy(
-                    outputs, labels, reduction="sum").item()
-                _, predicted = outputs.max(1)
-                total += labels.size(0)
-                correct += predicted.eq(labels).sum().item()
+        self.set_parameters(parameters, config)
+        loss, accuracy = test(self.net, self.test_dataloader, device=device)
+        print(f"Client-side evaluation loss {loss} / accuracy {accuracy}")
 
-        loss = loss_sum / total
-        accuracy = correct / total
-        return loss, total, {"accuracy": accuracy}
+        return (
+            float(loss),
+            len(self.test_dataloader.dataset),
+            {"accuracy": float(accuracy)},
+        )
 
 
 def main():
     # Load model and data (MobileNetV2, CIFAR-10)
-    model = torchvision.models.mobilenet_v2(pretrained=False, num_classes=10)
-    model.to(torch.float32)
+    net = mobilenet_v2(weights=None, num_classes=10)
+    net.to(torch.float32)
 
     # Load and preprocess your dataset
-    transform = transforms.Compose(
-        [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-    train_dataset = torchvision.datasets.CIFAR10(
-        root="./data", train=True, download=True, transform=transform)
-    test_dataset = torchvision.datasets.CIFAR10(
-        root="./data", train=False, download=True, transform=transform)
-
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=32, shuffle=True)
-    test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=32, shuffle=False)
+    train_dataloader, test_dataloader = load_datasets(batch_size=32)
 
     # Create the Flower client
     client = CifarClient(
-        model=model,
-        train_loader=train_loader,
-        test_loader=test_loader,
+        net=net,
+        train_dataloader=train_dataloader,
+        test_dataloader=test_dataloader,
     )
 
     # Start the training process
-    fl.client.start_numpy_client(
-        server_address="127.0.0.1:8080", client=client)
-
-
-if __name__ == "__main__":
-    main()
+    fl.client.start_numpy_client(server_address="127.0.0.1:8080", client=client)
