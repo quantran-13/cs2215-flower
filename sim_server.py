@@ -10,7 +10,7 @@ from flwr.simulation import start_simulation
 
 from client_device import CifarClient, mobilenet_v2
 from src.utils.dataset_utils import load_datasets, load_seperate_datasets
-from src.utils.helper_func import set_parameters, test
+from src.utils.helper_func import save_metrics_to_csv, set_parameters, test
 
 BATCH_SIZE = 32
 NUM_CLIENTS = 2
@@ -75,9 +75,12 @@ def evaluate(
     _, test_dataloader = load_datasets(batch_size=BATCH_SIZE)
 
     set_parameters(net, parameters)  # Update model with the latest parameters
-    loss, accuracy, _ = test(net, test_dataloader, device=device)
-
+    loss, accuracy, metrics_list = test(
+        net, test_dataloader, round=server_round, device=device
+    )
     print(f"Server-side evaluation loss {loss} / accuracy {accuracy}")
+    save_metrics_to_csv("server_eval_metrics.csv", metrics_list)
+
     return loss, {"accuracy": accuracy}
 
 

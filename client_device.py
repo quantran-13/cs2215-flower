@@ -26,6 +26,8 @@ class CifarClient(fl.client.NumPyClient):
         self.train_dataloader = train_dataloader
         self.test_dataloader = test_dataloader
 
+        self.curr_round = 0
+
     def get_parameters(self, config):
         # server_round = config["server_round"]
         # print(
@@ -43,20 +45,25 @@ class CifarClient(fl.client.NumPyClient):
         set_parameters(self.net, parameters)
 
     def fit(self, parameters, config):
-        server_round = config["server_round"]
-        local_epochs = config["local_epochs"]
+        self.curr_round = int(config["server_round"])
+        local_epochs = int(config["local_epochs"])
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"[Client, round {server_round}] fit, config: {config}")
+        print(f"[Client, round {self.curr_round}] fit, config: {config}")
 
         self.set_parameters(parameters, config)
         metrics_list = train(
             self.net,
             self.train_dataloader,
-            epochs=int(local_epochs),
+            epochs=local_epochs,
+            round=self.curr_round,
             device=device,
         )
         save_metrics_to_csv(
             f"client_{self.client_id}_train_metrics.csv", metrics_list
+        )
+        torch.save(
+            self.net.state_dict(),
+            f"./models/client_{self.client_id}_round_{self.curr_round}_model_weights.pth",
         )
 
         return self.get_parameters({}), len(self.train_dataloader.dataset), {}
@@ -68,7 +75,7 @@ class CifarClient(fl.client.NumPyClient):
 
         self.set_parameters(parameters, config)
         loss, accuracy, metrics_list = test(
-            self.net, self.test_dataloader, device=device
+            self.net, self.test_dataloader, round=self.curr_round, device=device
         )
         print(f"Client-side evaluation loss {loss} / accuracy {accuracy}")
         save_metrics_to_csv(

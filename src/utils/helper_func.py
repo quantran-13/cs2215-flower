@@ -16,7 +16,7 @@ def set_parameters(net, parameters: list[np.ndarray]):
         current_param.data = new_param
 
 
-def train(net, trainloader, epochs: int, device: torch.device):
+def train(net, trainloader, epochs: int, round: int, device: torch.device):
     """Train the network on the training set."""
     # print("Start train ...")
 
@@ -51,13 +51,13 @@ def train(net, trainloader, epochs: int, device: torch.device):
         epoch_acc = correct / total
         print(f"Epoch {epoch+1}: train loss {epoch_loss}, accuracy {epoch_acc}")
         metrics_list.append(
-            [epoch, epoch_loss, epoch_acc, 0.0, 0.0, epoch_time]
+            [epoch, round, epoch_loss, epoch_acc, 0.0, 0.0, epoch_time]
         )
 
     return metrics_list
 
 
-def test(net, testloader, device: torch.device):
+def test(net, testloader, round: int, device: torch.device):
     """Evaluate the network on the entire test set."""
     # print("Start test ...")
 
@@ -79,7 +79,7 @@ def test(net, testloader, device: torch.device):
     # loss /= len(testloader.dataset)
     accuracy = correct / total
 
-    metrics_list = [[0, 0.0, 0.0, loss, accuracy, 0.0]]
+    metrics_list = [[0, round, 0.0, 0.0, loss, accuracy, 0.0]]
     return loss, accuracy, metrics_list
 
 
@@ -88,16 +88,21 @@ def save_metrics_to_csv(filename, metrics_list):
         os.makedirs("metrics")
     file_path = os.path.join("metrics", filename)
 
+    if not os.path.exists(file_path):
+        with open(file_path, mode="w", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow(
+                [
+                    "epoch",
+                    "round",
+                    "train_loss",
+                    "train_accuracy",
+                    "validation_loss",
+                    "validation_accuracy",
+                    "epoch_time",
+                ]
+            )
+
     with open(file_path, mode="a", newline="") as file:
         writer = csv.writer(file)
-        writer.writerow(
-            [
-                "epoch",
-                "train_loss",
-                "train_accuracy",
-                "validation_loss",
-                "validation_accuracy",
-                "epoch_time",
-            ]
-        )
         writer.writerows(metrics_list)
