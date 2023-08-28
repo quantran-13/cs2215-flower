@@ -13,6 +13,17 @@ from flwr.server import ServerConfig
 from flwr.simulation import start_simulation
 from flwr.server.client_manager import SimpleClientManager
 
+from src.utils.dataset_utils import seperate_dataset
+
+
+BATCH_SIZE = 64
+NUM_CLIENTS = 2
+NUM_ROUNDS = 50
+LOCAL_EPOCHS = 1
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+client_train_datasets, client_test_datasets = seperate_dataset(NUM_CLIENTS)
+
+
 # Define a function to save metrics to a CSV file
 def save_metrics_to_csv(filename, metrics_list):
     if not os.path.exists("metrics"):
@@ -26,6 +37,8 @@ def save_metrics_to_csv(filename, metrics_list):
         writer.writerows(metrics_list)
 
 # Define the Flower client
+
+
 class CifarClient(fl.client.NumPyClient):
     def __init__(self, client_id, model, train_loader, test_loader):
         self.client_id = client_id
@@ -110,7 +123,7 @@ class CifarClient(fl.client.NumPyClient):
 
 def client_fn(cid: str):
     # Load model and data (MobileNetV2, CIFAR-10)
-    model = torchvision.models.mobilenet_v2(pretrained=False, num_classes=10)
+    model = torchvision.models.mobilenet_v2(weights=None, num_classes=10)
     model.to(torch.float32)
 
     # Load and preprocess your dataset
@@ -133,51 +146,6 @@ def client_fn(cid: str):
         train_loader=train_loader,
         test_loader=test_loader
     )
-
-def seperate_dataset():
-
-    # Data transformations
-    transform = transforms.Compose(
-        [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-
-    # Load full CIFAR-10 datasets
-    full_train_dataset = torchvision.datasets.CIFAR10(
-        root="./data", train=True, download=True, transform=transform)
-    full_test_dataset = torchvision.datasets.CIFAR10(
-        root="./data", train=False, download=True, transform=transform)
-
-    # Calculate samples per client
-    total_train_samples = len(full_train_dataset)
-    samples_per_client_train = total_train_samples // NUM_CLIENTS
-
-    total_test_samples = len(full_test_dataset)
-    samples_per_client_test = total_test_samples // NUM_CLIENTS
-
-    # Create subsets for each client
-    train_datasets = []
-    test_datasets = []
-
-    for i in range(NUM_CLIENTS):
-        train_start_idx = i * samples_per_client_train
-        train_end_idx = (i + 1) * samples_per_client_train
-        train_subset = Subset(
-            full_train_dataset, list(range(train_start_idx, train_end_idx)))
-        train_datasets.append(train_subset)
-
-        test_start_idx = i * samples_per_client_test
-        test_end_idx = (i + 1) * samples_per_client_test
-        test_subset = Subset(
-            full_test_dataset, list(range(test_start_idx, test_end_idx)))
-        test_datasets.append(test_subset)
-
-    # Printing the number of samples in each client's dataset
-    for i in range(NUM_CLIENTS):
-        print(
-            f"Client {i+1}: Train samples - {len(train_datasets[i])}, Test samples - {len(test_datasets[i])}")
-
-    return train_datasets, test_datasets
-
-
 
 
 def client_fn_gpu(cid: str):
@@ -205,7 +173,7 @@ def client_fn_gpu(cid: str):
     )
 
 
-def fit_config(server_round: int, local_epochs: int  ):
+def fit_config(server_round: int, local_epochs: int = LOCAL_EPOCHS):
     """Return training configuration dict for each round.
     Perform two rounds of training with one local epoch, increase to two local
     epochs afterwards.
@@ -255,10 +223,5 @@ def main():
 
 
 if __name__ == "__main__":
-    BATCH_SIZE = 64
-    NUM_CLIENTS = 2
-    NUM_ROUNDS = 1
-    LOCAL_EPOCHS = 1
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    client_train_datasets, client_test_datasets = seperate_dataset()
+
     main()
