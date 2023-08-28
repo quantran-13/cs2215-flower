@@ -27,6 +27,7 @@ def fit_config(server_round: int):
     return config
 
 
+# TODO: saved model after aggregate 
 def main():
     client_manager = SimpleClientManager()
     # client_manager = (SimpleClientManager([client]),)
