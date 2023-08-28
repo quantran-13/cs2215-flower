@@ -45,6 +45,8 @@ def train(net, trainloader, epochs: int, device: torch.device):
     """Train the network on the training set."""
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(net.parameters())
+    print("Start train ...")
+    net.to(device)
     net.train()
     for epoch in range(epochs):
         correct, total, epoch_loss = 0, 0, 0.0
@@ -66,8 +68,11 @@ def train(net, trainloader, epochs: int, device: torch.device):
 
 def test(net, testloader, device: torch.device):
     """Evaluate the network on the entire test set."""
+    print("Start test ...")
     criterion = torch.nn.CrossEntropyLoss()
     correct, total, loss = 0, 0, 0.0
+
+    net.to(device)
     net.eval()
     with torch.no_grad():
         for images, labels in testloader:
