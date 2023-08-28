@@ -1,34 +1,9 @@
+import csv
+import os
+import time
+
 import numpy as np
 import torch
-import torchvision.transforms as transforms
-from torch.utils.data import DataLoader
-from torchvision.datasets import CIFAR10
-
-
-def load_datasets(batch_size: int = 32):
-    # Download and transform CIFAR-10 (train and test)
-    transform = transforms.Compose(
-        [
-            transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-        ]
-    )
-    train_dataset = CIFAR10(
-        "./data", train=True, download=True, transform=transform
-    )
-    test_dataset = CIFAR10(
-        "./data", train=False, download=True, transform=transform
-    )
-
-    # Create DataLoader
-    train_dataloader = DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True
-    )
-    test_dataloader = DataLoader(
-        test_dataset, batch_size=batch_size, shuffle=False
-    )
-
-    return train_dataloader, test_dataloader
 
 
 def get_parameters(net) -> list[np.ndarray]:
@@ -43,32 +18,49 @@ def set_parameters(net, parameters: list[np.ndarray]):
 
 def train(net, trainloader, epochs: int, device: torch.device):
     """Train the network on the training set."""
+    # print("Start train ...")
+
     criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(net.parameters())
-    print("Start train ...")
+    optimizer = torch.optim.Adam(net.parameters(), lr=0.001)
+
     net.to(device)
     net.train()
+
+    metrics_list = []
     for epoch in range(epochs):
+        start_time = time.time()
+
         correct, total, epoch_loss = 0, 0, 0.0
         for images, labels in trainloader:
             images, labels = images.to(device), labels.to(device)
+
             optimizer.zero_grad()
             outputs = net(images)
             loss = criterion(net(images), labels)
             loss.backward()
             optimizer.step()
+
             # Metrics
             epoch_loss += loss
             total += labels.size(0)
             correct += (torch.max(outputs.data, 1)[1] == labels).sum().item()
-        epoch_loss /= len(trainloader.dataset)
+
+        epoch_time = time.time() - start_time
+        epoch_loss /= len(trainloader)
+        # epoch_loss /= len(trainloader.dataset)
         epoch_acc = correct / total
         print(f"Epoch {epoch+1}: train loss {epoch_loss}, accuracy {epoch_acc}")
+        metrics_list.append(
+            [epoch, epoch_loss, epoch_acc, 0.0, 0.0, epoch_time]
+        )
+
+    return metrics_list
 
 
 def test(net, testloader, device: torch.device):
     """Evaluate the network on the entire test set."""
-    print("Start test ...")
+    # print("Start test ...")
+
     criterion = torch.nn.CrossEntropyLoss()
     correct, total, loss = 0, 0, 0.0
 
@@ -82,6 +74,30 @@ def test(net, testloader, device: torch.device):
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
-    loss /= len(testloader.dataset)
+
+    loss /= len(testloader)
+    # loss /= len(testloader.dataset)
     accuracy = correct / total
-    return loss, accuracy
+
+    metrics_list = [[0, 0.0, 0.0, loss, accuracy, 0.0]]
+    return loss, accuracy, metrics_list
+
+
+def save_metrics_to_csv(filename, metrics_list):
+    if not os.path.exists("metrics"):
+        os.makedirs("metrics")
+    file_path = os.path.join("metrics", filename)
+
+    with open(file_path, mode="a", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(
+            [
+                "epoch",
+                "train_loss",
+                "train_accuracy",
+                "validation_loss",
+                "validation_accuracy",
+                "epoch_time",
+            ]
+        )
+        writer.writerows(metrics_list)

@@ -1,12 +1,14 @@
 import os
+import random
 
 import flwr as fl
 import torch
 from torchvision.models import mobilenet_v2
 
-from helper_func import (
+from src.utils.dataset_utils import load_datasets
+from src.utils.helper_func import (
     get_parameters,
-    load_datasets,
+    save_metrics_to_csv,
     set_parameters,
     test,
     train,
@@ -18,7 +20,8 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 # Define the Flower client
 class CifarClient(fl.client.NumPyClient):
-    def __init__(self, net, train_dataloader, test_dataloader):
+    def __init__(self, client_id, net, train_dataloader, test_dataloader):
+        self.client_id = client_id
         self.net = net
         self.train_dataloader = train_dataloader
         self.test_dataloader = test_dataloader
@@ -45,18 +48,15 @@ class CifarClient(fl.client.NumPyClient):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"[Client, round {server_round}] fit, config: {config}")
 
-        print("len(self.train_dataloader): ", len(self.train_dataloader))
-        print(
-            "len(self.train_dataloader.dataset): ",
-            len(self.train_dataloader.dataset),
-        )
-
         self.set_parameters(parameters, config)
-        train(
+        metrics_list = train(
             self.net,
             self.train_dataloader,
             epochs=int(local_epochs),
             device=device,
+        )
+        save_metrics_to_csv(
+            f"client_{self.client_id}_train_metrics.csv", metrics_list
         )
 
         return self.get_parameters({}), len(self.train_dataloader.dataset), {}
@@ -67,8 +67,13 @@ class CifarClient(fl.client.NumPyClient):
         print(f"[Client, round {server_round}] evaluate, config: {config}")
 
         self.set_parameters(parameters, config)
-        loss, accuracy = test(self.net, self.test_dataloader, device=device)
+        loss, accuracy, metrics_list = test(
+            self.net, self.test_dataloader, device=device
+        )
         print(f"Client-side evaluation loss {loss} / accuracy {accuracy}")
+        save_metrics_to_csv(
+            f"client_{self.client_id}_eval_metrics.csv", metrics_list
+        )
 
         return (
             float(loss),
@@ -87,6 +92,7 @@ def main():
 
     # Create the Flower client
     client = CifarClient(
+        client_id=random.randint(0, 1000),
         net=net,
         train_dataloader=train_dataloader,
         test_dataloader=test_dataloader,

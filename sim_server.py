@@ -1,189 +1,84 @@
-import os
-import csv
-import time
-import torch
-import torchvision
-from torchvision.transforms import transforms
-from torch.utils.data import Subset, DataLoader
+from typing import Optional
 
 import flwr as fl
+import torch
 from flwr.common import Metrics
-from flwr.server.strategy import FedAvg
 from flwr.server import ServerConfig
-from flwr.simulation import start_simulation
 from flwr.server.client_manager import SimpleClientManager
+from flwr.server.strategy import FedAvg
+from flwr.simulation import start_simulation
 
-from src.utils.dataset_utils import seperate_dataset
+from client_device import CifarClient, mobilenet_v2
+from src.utils.dataset_utils import load_datasets, load_seperate_datasets
+from src.utils.helper_func import set_parameters, test
 
-
-BATCH_SIZE = 64
+BATCH_SIZE = 32
 NUM_CLIENTS = 2
 NUM_ROUNDS = 50
 LOCAL_EPOCHS = 1
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-client_train_datasets, client_test_datasets = seperate_dataset(NUM_CLIENTS)
+
+client_train_datasets, client_test_datasets = load_seperate_datasets(
+    NUM_CLIENTS, BATCH_SIZE
+)
 
 
-# Define a function to save metrics to a CSV file
-def save_metrics_to_csv(filename, metrics_list):
-    if not os.path.exists("metrics"):
-        os.makedirs("metrics")
-    file_path = os.path.join("metrics", filename)
-
-    with open(file_path, mode="w+", newline="") as file:
-        writer = csv.writer(file)
-        writer.writerow(["epoch", "train_loss", "validation_loss",
-                        "validation_accuracy", "epoch_time"])
-        writer.writerows(metrics_list)
-
-# Define the Flower client
-
-
-class CifarClient(fl.client.NumPyClient):
-    def __init__(self, client_id, model, train_loader, test_loader):
-        self.client_id = client_id
-        self.model = model
-        self.train_loader = train_loader
-        self.test_loader = test_loader
-
-    def get_parameters(self, config):
-        print("[Client] get_parameters")
-        self.model.cpu()  # Transfer model to CPU
-        return [p.detach().numpy() for p in self.model.parameters()]
-
-    def set_parameters(self, parameters, config):
-        new_parameters = [torch.tensor(p, dtype=torch.float32)
-                          for p in parameters]
-        for current_param, new_param in zip(self.model.parameters(), new_parameters):
-            # Transfer parameters to the specified device (CPU/GPU)
-            current_param.data = new_param.to(device)
-
-    def fit(self, parameters, config):
-        server_round = config["server_round"]
-        local_epochs = config["local_epochs"]
-        print(f"[Client, round {server_round}] fit, config: {config}")
-
-        self.set_parameters(parameters, config)
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
-        metrics_list = []
-
-        for epoch in range(local_epochs):
-            start_time = time.time()
-            total_loss = 0.0
-
-            for inputs, labels in self.train_loader:
-                # transfer to device
-                inputs = inputs.to(device)
-                labels = labels.to(device)
-
-                optimizer.zero_grad()
-                outputs = self.model(inputs)
-                loss = torch.nn.functional.cross_entropy(outputs, labels)
-                loss.backward()
-                optimizer.step()
-                total_loss += loss.item()
-
-            epoch_time = time.time() - start_time
-            avg_loss = total_loss / len(self.train_loader)
-            metrics_list.append([epoch, avg_loss, 0.0, 0.0, epoch_time])
-
-        save_metrics_to_csv(
-            f"client_{self.client_id}_train_metrics.csv", metrics_list)
-        return self.get_parameters({}), len(self.train_loader.dataset), {}
-
-    # NOTE: this is federated evaluation
-    def evaluate(self, parameters, config):
-        self.set_parameters(parameters, config)
-        loss_sum = 0.0
-        correct = 0
-        total = 0
-
-        with torch.no_grad():
-            for inputs, labels in self.test_loader:
-                # transfer to device
-                inputs = inputs.to(device)
-                labels = labels.to(device)
-                outputs = self.model(inputs)
-
-                loss_sum += torch.nn.functional.cross_entropy(
-                    outputs, labels, reduction="sum").item()
-                _, predicted = outputs.max(1)
-                total += labels.size(0)
-                correct += predicted.eq(labels).sum().item()
-
-        loss = loss_sum / total
-        accuracy = correct / total
-
-        metrics_list = [[0, 0.0, loss, accuracy, 0.0]]
-        save_metrics_to_csv(
-            f"client_{self.client_id}_eval_metrics.csv", metrics_list)
-
-        return loss, total, {"accuracy": accuracy}
-
-
-def client_fn(cid: str):
+def client_fn(cid) -> CifarClient:
     # Load model and data (MobileNetV2, CIFAR-10)
-    model = torchvision.models.mobilenet_v2(weights=None, num_classes=10)
-    model.to(torch.float32)
+    net = mobilenet_v2(weights=None, num_classes=10)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    net.to(device).to(torch.float32)
 
     # Load and preprocess your dataset
-    transform = transforms.Compose(
-        [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-    train_dataset = torchvision.datasets.CIFAR10(
-        root="./data", train=True, download=True, transform=transform)
-    test_dataset = torchvision.datasets.CIFAR10(
-        root="./data", train=False, download=True, transform=transform)
+    train_dataloader, test_dataloader = load_datasets(batch_size=BATCH_SIZE)
 
-    train_loader = DataLoader(
-        train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    test_loader = DataLoader(
-        test_dataset, batch_size=BATCH_SIZE, shuffle=False)
-
-    # TODO: fit data and assign to different client
-    return CifarClient(
+    # Create the Flower client
+    client = CifarClient(
         client_id=cid,
-        model=model,
-        train_loader=train_loader,
-        test_loader=test_loader
+        net=net,
+        train_dataloader=train_dataloader,
+        test_dataloader=test_dataloader,
     )
+
+    return client
 
 
 def client_fn_gpu(cid: str):
-    # Load model (MobileNetV2)
-    model = torchvision.models.mobilenet_v2(
-        pretrained=False, num_classes=10).to(device)
+    # Load model and data (MobileNetV2, CIFAR-10)
+    net = mobilenet_v2(weights=None, num_classes=10)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    net.to(device).to(torch.float32)
 
     # Load train and test datasets for the specific client
-    train_dataset = client_train_datasets[int(cid)]
-    test_dataset = client_test_datasets[int(cid)]
+    train_dataloader = client_train_datasets[int(cid)]
+    test_dataloader = client_test_datasets[int(cid)]
 
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=32, shuffle=True, num_workers=4, pin_memory=True)
-    test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=32, shuffle=False, num_workers=4, pin_memory=True)
-
-    # Move the model and data loader to the same device
-    model.to(device)
-
-    return CifarClient(
+    # Create the Flower client
+    client = CifarClient(
         client_id=cid,
-        model=model,
-        train_loader=train_loader,
-        test_loader=test_loader
+        net=net,
+        train_dataloader=train_dataloader,
+        test_dataloader=test_dataloader,
     )
 
+    return client
 
-def fit_config(server_round: int, local_epochs: int = LOCAL_EPOCHS):
-    """Return training configuration dict for each round.
-    Perform two rounds of training with one local epoch, increase to two local
-    epochs afterwards.
-    """
-    config = {
-        "server_round": server_round,  # The current round of federated learning
-        "num_rounds": server_round,
-        "local_epochs": local_epochs,  #
-    }
-    return config
+
+def evaluate(
+    server_round: int,
+    parameters: fl.common.NDArrays,
+    config: dict[str, fl.common.Scalar],
+) -> Optional[tuple[float, dict[str, fl.common.Scalar]]]:
+    net = mobilenet_v2(pretrained=False, num_classes=10)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    net.to(device).to(torch.float32)
+
+    _, test_dataloader = load_datasets(batch_size=BATCH_SIZE)
+
+    set_parameters(net, parameters)  # Update model with the latest parameters
+    loss, accuracy, _ = test(net, test_dataloader, device=device)
+
+    print(f"Server-side evaluation loss {loss} / accuracy {accuracy}")
+    return loss, {"accuracy": accuracy}
 
 
 def weighted_average(metrics: list[tuple[int, Metrics]]) -> Metrics:
@@ -195,33 +90,57 @@ def weighted_average(metrics: list[tuple[int, Metrics]]) -> Metrics:
     return {"accuracy": sum(accuracies) / sum(examples)}
 
 
-def main():
-    # NOTE: my client resources
-    # client get 5% of the CPU & 10% GPU because
-    # estimate from Raspberrypi 4GB to RTX 2070 & Ryzen 5 2600
-    my_client_resources = {'num_cpus': 0.05, 'num_gpus': 0.1}
+def fit_config(server_round: int, local_epochs: int = LOCAL_EPOCHS):
+    """Return training configuration dict for each round.
 
-    # Specify number of FL rounds
+    Perform two rounds of training with one local epoch, increase to two local
+    epochs afterwards.
+    """
+    config = {
+        "server_round": server_round,  # The current round of federated learning
+        "local_epochs": local_epochs,
+    }
+    return config
+
+
+def main():
+    strategy = FedAvg(
+        # fraction_fit=1,
+        # fraction_evaluate=1,
+        # min_fit_clients=2,
+        # min_evaluate_clients=2,
+        # min_available_clients=NUM_CLIENTS,
+        evaluate_metrics_aggregation_fn=weighted_average,  # Pass the metric aggregation function
+        # initial_parameters=fl.common.ndarrays_to_parameters(params),
+        evaluate_fn=evaluate,  # Pass the evaluate function to the server
+        on_fit_config_fn=fit_config,  # Pass the fit_config function to the server
+    )
+
     server_config = ServerConfig(num_rounds=NUM_ROUNDS)
 
-    strategy = FedAvg(
-        on_fit_config_fn=fit_config,
-        evaluate_metrics_aggregation_fn=weighted_average,
-    )
+    # NOTE: my client resources
+    client_resources = None
+    # client get 5% of the CPU & 10% GPU because
+    # estimate from Raspberrypi 4GB to RTX 2070 & Ryzen 5 2600
+    client_resources = {"num_cpus": 0.05, "num_gpus": 0.1}
+
+    # Specify number of FL rounds
     client_manager = SimpleClientManager()
 
     # Launch the simulation
-    hist = start_simulation(
-        # client_fn=client_fn,  # A function to run a _virtual_ client when required
+    history = start_simulation(
         client_fn=client_fn_gpu,  # A function to run a _virtual_ client when required
-        num_clients=2,  # Total number of clients available
+        num_clients=NUM_CLIENTS,  # Total number of clients available
         config=server_config,
         strategy=strategy,  # A Flower strategy
-        client_resources=my_client_resources,
-        client_manager=client_manager
+        client_resources=client_resources,
+        client_manager=client_manager,
     )
+
+    return history
 
 
 if __name__ == "__main__":
+    result = main()
 
-    main()
+    # TODO: save result to csv

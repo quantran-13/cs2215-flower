@@ -8,7 +8,8 @@ from flwr.server.client_manager import SimpleClientManager
 from flwr.server.strategy import FedAvg
 from torchvision.models import mobilenet_v2
 
-from helper_func import load_datasets, set_parameters, test
+from src.utils.dataset_utils import load_datasets
+from src.utils.helper_func import set_parameters, test
 
 
 # The `evaluate` function will be by Flower called after every round
@@ -24,7 +25,7 @@ def evaluate(
     _, test_dataloader = load_datasets(batch_size=32)
 
     set_parameters(net, parameters)  # Update model with the latest parameters
-    loss, accuracy = test(net, test_dataloader, device=device)
+    loss, accuracy, _ = test(net, test_dataloader, device=device)
 
     print(f"Server-side evaluation loss {loss} / accuracy {accuracy}")
     return loss, {"accuracy": accuracy}
