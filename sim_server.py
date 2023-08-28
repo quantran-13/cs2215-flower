@@ -30,18 +30,22 @@ def save_metrics_to_csv(filename, metrics_list):
         os.makedirs("metrics")
     file_path = os.path.join("metrics", filename)
 
-    with open(file_path, mode="w+", newline="") as file:
+    if not os.path.exists(file_path):
+        with open(file_path, mode="w", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow(["epoch", "round", "train_loss", "validation_loss",
+                            "validation_accuracy", "epoch_time"])
+
+    with open(file_path, mode="a", newline="") as file:
         writer = csv.writer(file)
-        writer.writerow(["epoch", "train_loss", "validation_loss",
-                        "validation_accuracy", "epoch_time"])
         writer.writerows(metrics_list)
 
+
 # Define the Flower client
-
-
 class CifarClient(fl.client.NumPyClient):
     def __init__(self, client_id, model, train_loader, test_loader):
         self.client_id = client_id
+        self.curr_round = None
         self.model = model
         self.train_loader = train_loader
         self.test_loader = test_loader
@@ -59,9 +63,9 @@ class CifarClient(fl.client.NumPyClient):
             current_param.data = new_param.to(device)
 
     def fit(self, parameters, config):
-        server_round = config["server_round"]
+        self.curr_round = config["server_round"]
         local_epochs = config["local_epochs"]
-        print(f"[Client, round {server_round}] fit, config: {config}")
+        print(f"[Client, round {self.curr_round}] fit, config: {config}")
 
         self.set_parameters(parameters, config)
         optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
@@ -85,12 +89,14 @@ class CifarClient(fl.client.NumPyClient):
 
             epoch_time = time.time() - start_time
             avg_loss = total_loss / len(self.train_loader)
-            metrics_list.append([epoch, avg_loss, 0.0, 0.0, epoch_time])
+            metrics_list.append(
+                [epoch, self.curr_round, avg_loss, 0.0, 0.0, epoch_time])
 
         save_metrics_to_csv(
             f"client_{self.client_id}_train_metrics.csv", metrics_list)
 
-        torch.save(self.model.state_dict(), f'{self.client_id}_model_weights_{server_round}.pth')
+        torch.save(self.model.state_dict(
+        ), f'./models/client_{self.client_id}_round_{self.curr_round}_model_weights.pth')
         return self.get_parameters({}), len(self.train_loader.dataset), {}
 
     # NOTE: this is federated evaluation
@@ -116,7 +122,7 @@ class CifarClient(fl.client.NumPyClient):
         loss = loss_sum / total
         accuracy = correct / total
 
-        metrics_list = [[0, 0.0, loss, accuracy, 0.0]]
+        metrics_list = [[0, self.curr_round, 0.0, loss, accuracy, 0.0]]
         save_metrics_to_csv(
             f"client_{self.client_id}_eval_metrics.csv", metrics_list)
 
