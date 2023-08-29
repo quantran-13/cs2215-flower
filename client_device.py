@@ -69,9 +69,9 @@ class CifarClient(fl.client.NumPyClient):
         return self.get_parameters({}), len(self.train_dataloader.dataset), {}
 
     def evaluate(self, parameters, config):
-        server_round = config["server_round"]
+        # server_round = config["server_round"] # BUG:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"[Client, round {server_round}] evaluate, config: {config}")
+        print(f"[Client, round {self.curr_round}] evaluate, config: {config}")
 
         self.set_parameters(parameters, config)
         loss, accuracy, metrics_list = test(

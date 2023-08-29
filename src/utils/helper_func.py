@@ -46,7 +46,8 @@ def train(net, trainloader, epochs: int, round: int, device: torch.device):
             correct += (torch.max(outputs.data, 1)[1] == labels).sum().item()
 
         epoch_time = time.time() - start_time
-        epoch_loss /= len(trainloader)
+        epoch_loss /= len(trainloader) 
+        epoch_loss = epoch_loss.detach().item()
         # epoch_loss /= len(trainloader.dataset)
         epoch_acc = correct / total
         print(f"Epoch {epoch+1}: train loss {epoch_loss}, accuracy {epoch_acc}")
