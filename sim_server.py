@@ -1,10 +1,12 @@
 import os
+os.environ['RAY_memory_monitor_refresh_ms'] = "0" # disable kill workers  
+
 import csv
 import time
 import torch
 import torchvision
 from torchvision.transforms import transforms
-from torch.utils.data import Subset, DataLoader
+from torch.utils.data import DataLoader
 
 import flwr as fl
 from flwr.common import Metrics
@@ -123,6 +125,7 @@ class CifarClient(fl.client.NumPyClient):
         accuracy = correct / total
 
         metrics_list = [[0, self.curr_round, 0.0, loss, accuracy, 0.0]]
+        print(f"Evaluate client {self.client_id}, metrics: {metrics_list}")
         save_metrics_to_csv(
             f"client_{self.client_id}_eval_metrics.csv", metrics_list)
 
@@ -159,6 +162,9 @@ def client_fn(cid: str):
 
 
 def client_fn_gpu(cid: str):
+    global client_train_datasets
+    global client_test_datasets
+
     # Load model (MobileNetV2)
     model = torchvision.models.mobilenet_v2(
         pretrained=False, num_classes=10).to(device)
@@ -167,9 +173,9 @@ def client_fn_gpu(cid: str):
     train_dataset = client_train_datasets[int(cid)]
     test_dataset = client_test_datasets[int(cid)]
 
-    train_loader = torch.utils.data.DataLoader(
+    train_loader = DataLoader(
         train_dataset, batch_size=32, shuffle=True, num_workers=4, pin_memory=True)
-    test_loader = torch.utils.data.DataLoader(
+    test_loader = DataLoader(
         test_dataset, batch_size=32, shuffle=False, num_workers=4, pin_memory=True)
 
     # Move the model and data loader to the same device
@@ -206,10 +212,7 @@ def weighted_average(metrics: list[tuple[int, Metrics]]) -> Metrics:
 
 
 def main():
-    # NOTE: my client resources
-    # client get 5% of the CPU & 10% GPU because
-    # estimate from Raspberrypi 4GB to RTX 2070 & Ryzen 5 2600
-    my_client_resources = {'num_cpus': 0.05, 'num_gpus': 0.1}
+
 
     # Specify number of FL rounds
     server_config = ServerConfig(num_rounds=NUM_ROUNDS)
@@ -220,18 +223,33 @@ def main():
     )
     client_manager = SimpleClientManager()
 
+    # Total resources for simulation
+    num_cpus = 5
+    num_gpus = 1
+    # ram_memory = 24_000 * 1024 * 1024 # 16 GB
+
+    # NOTE: my client resources
+    # client get 5% of the CPU & 10% GPU because
+    # estimate from Raspberrypi 4GB to RTX 2070 & Ryzen 5 2600
+    my_client_resources = {'num_cpus': 0.05, 'num_gpus': 0.1}
+
     # Launch the simulation
     hist = start_simulation(
         # client_fn=client_fn,  # A function to run a _virtual_ client when required
         client_fn=client_fn_gpu,  # A function to run a _virtual_ client when required
-        num_clients=2,  # Total number of clients available
+        num_clients=NUM_CLIENTS,  # Total number of clients available
         config=server_config,
         strategy=strategy,  # A Flower strategy
         client_resources=my_client_resources,
-        client_manager=client_manager
+        client_manager=client_manager, 
+        ray_init_args = {
+            "include_dashboard": True, # we need this one for tracking
+            "num_cpus": num_cpus,
+            "num_gpus": num_gpus,
+            # "memory": ram_memory,
+        },
     )
 
 
 if __name__ == "__main__":
-
     main()
